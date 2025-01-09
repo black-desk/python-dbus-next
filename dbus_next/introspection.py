@@ -32,9 +32,6 @@ class Arg:
                  signature: Union[SignatureType, str],
                  direction: List[ArgDirection] = None,
                  name: str = None):
-        if name is not None:
-            assert_member_name_valid(name)
-
         type_ = None
         if type(signature) is SignatureType:
             type_ = signature
