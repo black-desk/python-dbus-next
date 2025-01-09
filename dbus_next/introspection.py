@@ -3,13 +3,31 @@ from .signature import SignatureTree, SignatureType
 from .validators import assert_member_name_valid, assert_interface_name_valid
 from .errors import InvalidIntrospectionError
 
-from typing import List, Union
+from typing import List, Union, Optional
 
 import xml.etree.ElementTree as ET
 
 # https://dbus.freedesktop.org/doc/dbus-specification.html#introspection-format
-# TODO annotations
 
+
+def _fetch_annotations(element: ET.Element) -> dict[str, str]:
+    annotations = {}
+
+    for child in element:
+        if child.tag != 'annotation':
+            continue
+        annotation_name = child.attrib.get("name")
+        assert annotation_name is not None
+        annotation_value = child.attrib.get("value")
+        assert annotation_value is not None
+        annotations[annotation_name] = annotation_value
+
+    return annotations
+
+def _extract_annotations(element: ET.Element, annotations: dict[str, str]):
+    for key, value in annotations.items():
+        annotation = ET.Element('annotation', {"name": key, "value": value})
+        element.append(annotation)
 
 class Arg:
     """A class that represents an input or output argument to a signal or a method.
@@ -22,6 +40,8 @@ class Arg:
     :vartype type: :class:`SignatureType <dbus_next.SignatureType>`
     :ivar signature: The signature string of this argument.
     :vartype signature: str
+    :ivar annotations: The annotations of this arg.
+    :vartype annotations: dict[str, str]
 
     :raises:
         - :class:`InvalidMemberNameError <dbus_next.InvalidMemberNameError>` - If the name of the arg is not valid.
@@ -31,7 +51,8 @@ class Arg:
     def __init__(self,
                  signature: Union[SignatureType, str],
                  direction: List[ArgDirection] = None,
-                 name: str = None):
+                 name: str = None,
+                 annotations: dict[str, str] = None):
         type_ = None
         if type(signature) is SignatureType:
             type_ = signature
@@ -47,6 +68,7 @@ class Arg:
         self.signature = signature
         self.name = name
         self.direction = direction
+        self.annotations = annotations or {}
 
     def from_xml(element: ET.Element, direction: ArgDirection) -> 'Arg':
         """Convert a :class:`xml.etree.ElementTree.Element` into a
@@ -68,7 +90,9 @@ class Arg:
         if not signature:
             raise InvalidIntrospectionError('a method argument must have a "type" attribute')
 
-        return Arg(signature, direction, name)
+        annotations = _fetch_annotations(element)
+
+        return Arg(signature, direction, name, annotations)
 
     def to_xml(self) -> ET.Element:
         """Convert this :class:`Arg` into an :class:`xml.etree.ElementTree.Element`.
@@ -80,6 +104,8 @@ class Arg:
         if self.direction:
             element.set('direction', self.direction.value)
         element.set('type', self.signature)
+
+        _extract_annotations(element, self.annotations)
 
         return element
 
@@ -93,17 +119,20 @@ class Signal:
     :vartype args: list(Arg)
     :ivar signature: The collected signature of the output arguments.
     :vartype signature: str
+    :ivar annotations: The annotations of this signal.
+    :vartype annotations: dict[str, str]
 
     :raises:
         - :class:`InvalidMemberNameError <dbus_next.InvalidMemberNameError>` - If the name of the signal is not a valid member name.
     """
-    def __init__(self, name: str, args: List[Arg] = None):
+    def __init__(self, name: str, args: List[Arg] = None, annotations: Optional[dict[str, str]] = None):
         if name is not None:
             assert_member_name_valid(name)
 
         self.name = name
         self.args = args or []
         self.signature = ''.join(arg.signature for arg in self.args)
+        self.annotations = annotations or {}
 
     def from_xml(element):
         """Convert an :class:`xml.etree.ElementTree.Element` to a :class:`Signal`.
@@ -127,7 +156,9 @@ class Signal:
             if child.tag == 'arg':
                 args.append(Arg.from_xml(child, ArgDirection.OUT))
 
-        signal = Signal(name, args)
+        annotations = _fetch_annotations(element)
+
+        signal = Signal(name, args, annotations)
 
         return signal
 
@@ -139,6 +170,8 @@ class Signal:
 
         for arg in self.args:
             element.append(arg.to_xml())
+
+        _extract_annotations(element, self.annotations)
 
         return element
 
@@ -156,11 +189,13 @@ class Method:
     :vartype in_signature: str
     :ivar out_signature: The collected signature string of the output arguments.
     :vartype out_signature: str
+    :ivar annotations: The annotations of this method.
+    :vartype annotations: dict[str, str]
 
     :raises:
         - :class:`InvalidMemberNameError <dbus_next.InvalidMemberNameError>` - If the name of this method is not valid.
     """
-    def __init__(self, name: str, in_args: List[Arg] = [], out_args: List[Arg] = []):
+    def __init__(self, name: str, in_args: List[Arg] = [], out_args: List[Arg] = [], annotations: Optional[dict[str, str]] = None):
         assert_member_name_valid(name)
 
         self.name = name
@@ -168,6 +203,7 @@ class Method:
         self.out_args = out_args
         self.in_signature = ''.join(arg.signature for arg in in_args)
         self.out_signature = ''.join(arg.signature for arg in out_args)
+        self.annotations = annotations or {}
 
     def from_xml(element: ET.Element) -> 'Method':
         """Convert an :class:`xml.etree.ElementTree.Element` to a :class:`Method`.
@@ -198,7 +234,9 @@ class Method:
                 elif direction == ArgDirection.OUT:
                     out_args.append(arg)
 
-        return Method(name, in_args, out_args)
+        annotations = _fetch_annotations(element)
+
+        return Method(name, in_args, out_args, annotations)
 
     def to_xml(self) -> ET.Element:
         """Convert this :class:`Method` into an :class:`xml.etree.ElementTree.Element`.
@@ -210,6 +248,8 @@ class Method:
             element.append(arg.to_xml())
         for arg in self.out_args:
             element.append(arg.to_xml())
+
+        _extract_annotations(element, self.annotations)
 
         return element
 
@@ -226,6 +266,8 @@ class Property:
     :vartype access: :class:`PropertyAccess <dbus_next.PropertyAccess>`
     :ivar type: The parsed type of this property.
     :vartype type: :class:`SignatureType <dbus_next.SignatureType>`
+    :ivar annotations: The annotations of this property.
+    :vartype annotations: dict[str, str]
 
     :raises:
         - :class:`InvalidIntrospectionError <dbus_next.InvalidIntrospectionError>` - If the property is not a single complete type.
@@ -235,7 +277,8 @@ class Property:
     def __init__(self,
                  name: str,
                  signature: str,
-                 access: PropertyAccess = PropertyAccess.READWRITE):
+                 access: PropertyAccess = PropertyAccess.READWRITE,
+                annotations: Optional[dict[str, str]] = None):
         assert_member_name_valid(name)
 
         tree = SignatureTree._get(signature)
@@ -247,6 +290,7 @@ class Property:
         self.signature = signature
         self.access = access
         self.type = tree.types[0]
+        self.annotations = annotations or {}
 
     def from_xml(element):
         """Convert an :class:`xml.etree.ElementTree.Element` to a :class:`Property`.
@@ -268,7 +312,9 @@ class Property:
         if not signature:
             raise InvalidIntrospectionError('properties must have a "type" attribute')
 
-        return Property(name, signature, access)
+        annotations = _fetch_annotations(element)
+
+        return Property(name, signature, access, annotations)
 
     def to_xml(self) -> ET.Element:
         """Convert this :class:`Property` into an :class:`xml.etree.ElementTree.Element`.
@@ -277,6 +323,9 @@ class Property:
         element.set('name', self.name)
         element.set('type', self.signature)
         element.set('access', self.access.value)
+
+        _extract_annotations(element, self.annotations)
+
         return element
 
 
@@ -294,6 +343,8 @@ class Interface:
     :vartype signals: list(:class:`Signal`)
     :ivar properties: A list of properties exposed on this interface.
     :vartype properties: list(:class:`Property`)
+    :ivar annotations: The annotations of this interface.
+    :vartype annotations: dict[str, str]
 
     :raises:
         - :class:`InvalidInterfaceNameError <dbus_next.InvalidInterfaceNameError>` - If the name is not a valid interface name.
@@ -302,13 +353,15 @@ class Interface:
                  name: str,
                  methods: List[Method] = None,
                  signals: List[Signal] = None,
-                 properties: List[Property] = None):
+                 properties: List[Property] = None,
+                 annotations: Optional[dict[str, str]] = None):
         assert_interface_name_valid(name)
 
         self.name = name
         self.methods = methods if methods is not None else []
         self.signals = signals if signals is not None else []
         self.properties = properties if properties is not None else []
+        self.annotations = annotations or {}
 
     @staticmethod
     def from_xml(element: ET.Element) -> 'Interface':
@@ -336,6 +389,8 @@ class Interface:
                 interface.signals.append(Signal.from_xml(child))
             elif child.tag == 'property':
                 interface.properties.append(Property.from_xml(child))
+    
+        interface.annotations = _fetch_annotations(element)
 
         return interface
 
@@ -351,6 +406,8 @@ class Interface:
             element.append(signal.to_xml())
         for prop in self.properties:
             element.append(prop.to_xml())
+
+        _extract_annotations(element, self.annotations)
 
         return element
 
