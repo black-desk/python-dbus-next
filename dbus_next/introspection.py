@@ -278,9 +278,7 @@ class Property:
                  name: str,
                  signature: str,
                  access: PropertyAccess = PropertyAccess.READWRITE,
-                annotations: Optional[dict[str, str]] = None):
-        assert_member_name_valid(name)
-
+                 annotations: Optional[dict[str, str]] = None):
         tree = SignatureTree._get(signature)
         if len(tree.types) != 1:
             raise InvalidIntrospectionError(
